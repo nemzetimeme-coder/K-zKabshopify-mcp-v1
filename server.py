@@ -881,6 +881,913 @@ async def shopify_get_shop(params: EmptyInput) -> str:
     except Exception as e:
         return _error(e)
 
+# ═══════════════════════════════════════════════════════════════════════════
+# THEMES & THEME ASSETS
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListThemesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+@mcp.tool(
+    name="shopify_list_themes",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_themes(params: ListThemesInput) -> str:
+    """List all themes. The active theme has role='main'. Use the ID for asset operations."""
+    try:
+        data   = await _request("GET", "themes.json")
+        themes = data.get("themes", [])
+        return _fmt({"count": len(themes), "themes": themes})
+    except Exception as e:
+        return _error(e)
+
+
+class ListThemeAssetsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    theme_id: int = Field(..., description="Theme ID (get from shopify_list_themes)")
+
+
+@mcp.tool(
+    name="shopify_list_theme_assets",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_theme_assets(params: ListThemeAssetsInput) -> str:
+    """List all asset keys in a theme (Liquid files, JSON configs, CSS, JS, etc.)."""
+    try:
+        data   = await _request("GET", f"themes/{params.theme_id}/assets.json")
+        assets = data.get("assets", [])
+        return _fmt({"count": len(assets), "assets": assets})
+    except Exception as e:
+        return _error(e)
+
+
+class GetThemeAssetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    theme_id:  int = Field(..., description="Theme ID")
+    asset_key: str = Field(..., description="Asset key, e.g. 'config/settings_data.json' or 'sections/header.liquid'")
+
+
+@mcp.tool(
+    name="shopify_get_theme_asset",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_get_theme_asset(params: GetThemeAssetInput) -> str:
+    """
+    Get the full content of a specific theme asset.
+    Common keys:
+      - config/settings_data.json  → all theme settings (texts, colors, layout)
+      - config/settings_schema.json → theme settings schema
+      - sections/header.liquid      → header template
+      - sections/footer.liquid      → footer template
+      - sections/announcement-bar.liquid → announcement bar
+      - layout/theme.liquid         → main layout
+      - templates/index.json        → homepage template
+    """
+    try:
+        data = await _request(
+            "GET",
+            f"themes/{params.theme_id}/assets.json",
+            params={"asset[key]": params.asset_key},
+        )
+        return _fmt(data.get("asset", data))
+    except Exception as e:
+        return _error(e)
+
+
+class UpdateThemeAssetInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    theme_id:  int = Field(..., description="Theme ID")
+    asset_key: str = Field(..., description="Asset key to update, e.g. 'config/settings_data.json'")
+    value:     str = Field(..., description="Full new content for the asset (entire file content)")
+
+
+@mcp.tool(
+    name="shopify_update_theme_asset",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_update_theme_asset(params: UpdateThemeAssetInput) -> str:
+    """
+    Update the content of a theme asset. Use this to:
+      - Edit any text, headline, announcement bar in settings_data.json
+      - Modify Liquid templates (header, footer, sections)
+      - Change theme settings (colors, fonts, layout)
+    IMPORTANT: Always read the asset first with shopify_get_theme_asset, 
+    modify only what's needed, then write the full content back.
+    """
+    try:
+        body = {"asset": {"key": params.asset_key, "value": params.value}}
+        data = await _request("PUT", f"themes/{params.theme_id}/assets.json", body=body)
+        return _fmt(data.get("asset", data))
+    except Exception as e:
+        return _error(e)
+
+
+class DeleteThemeAssetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    theme_id:  int = Field(..., description="Theme ID")
+    asset_key: str = Field(..., description="Asset key to delete")
+
+
+@mcp.tool(
+    name="shopify_delete_theme_asset",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_delete_theme_asset(params: DeleteThemeAssetInput) -> str:
+    """Delete a theme asset. Use with caution — this removes the file from the theme."""
+    try:
+        await _request(
+            "DELETE",
+            f"themes/{params.theme_id}/assets.json",
+            params={"asset[key]": params.asset_key},
+        )
+        return f"Asset '{params.asset_key}' deleted from theme {params.theme_id}."
+    except Exception as e:
+        return _error(e)
+
+
+class GetThemeSettingsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    theme_id: int = Field(..., description="Theme ID (get active theme ID from shopify_list_themes)")
+
+
+@mcp.tool(
+    name="shopify_get_theme_settings",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_get_theme_settings(params: GetThemeSettingsInput) -> str:
+    """
+    Get config/settings_data.json — the master settings file containing ALL 
+    customizable content: headlines, announcement bar text, button labels, 
+    section texts, colors, fonts, and layout options.
+    This is the primary file to read/edit for any storefront text changes.
+    """
+    try:
+        data = await _request(
+            "GET",
+            f"themes/{params.theme_id}/assets.json",
+            params={"asset[key]": "config/settings_data.json"},
+        )
+        return _fmt(data.get("asset", data))
+    except Exception as e:
+        return _error(e)
+
+
+class UpdateThemeSettingsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    theme_id: int = Field(..., description="Theme ID")
+    value:    str = Field(..., description="Full updated JSON content of settings_data.json")
+
+
+@mcp.tool(
+    name="shopify_update_theme_settings",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_update_theme_settings(params: UpdateThemeSettingsInput) -> str:
+    """
+    Write the full updated config/settings_data.json back to the theme.
+    Use shopify_get_theme_settings first, modify the JSON, then call this.
+    Changing this file updates storefront texts, colors, fonts, and layout instantly.
+    """
+    try:
+        body = {"asset": {"key": "config/settings_data.json", "value": params.value}}
+        data = await _request("PUT", f"themes/{params.theme_id}/assets.json", body=body)
+        return _fmt(data.get("asset", data))
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAGES (Online Store Pages)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListPagesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    limit:   Optional[int] = Field(default=50, ge=1, le=250)
+    since_id: Optional[int] = Field(default=None)
+    title:   Optional[str] = Field(default=None, description="Filter by title")
+    handle:  Optional[str] = Field(default=None, description="Filter by handle (URL slug)")
+    fields:  Optional[str] = Field(default=None, description="Comma-separated fields to return")
+
+
+@mcp.tool(
+    name="shopify_list_pages",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_pages(params: ListPagesInput) -> str:
+    """List all online store pages (About, Contact, FAQ, etc.)."""
+    try:
+        p: Dict[str, Any] = {"limit": params.limit}
+        for field in ["since_id", "title", "handle", "fields"]:
+            val = getattr(params, field)
+            if val is not None:
+                p[field] = val
+        data  = await _request("GET", "pages.json", params=p)
+        pages = data.get("pages", [])
+        return _fmt({"count": len(pages), "pages": pages})
+    except Exception as e:
+        return _error(e)
+
+
+class GetPageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page_id: int = Field(..., description="Page ID")
+
+
+@mcp.tool(
+    name="shopify_get_page",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_get_page(params: GetPageInput) -> str:
+    """Get a single page by ID, including its full HTML content."""
+    try:
+        data = await _request("GET", f"pages/{params.page_id}.json")
+        return _fmt(data.get("page", data))
+    except Exception as e:
+        return _error(e)
+
+
+class CreatePageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    title:     str           = Field(..., min_length=1, description="Page title")
+    body_html: Optional[str] = Field(default=None, description="HTML content of the page")
+    handle:    Optional[str] = Field(default=None, description="URL slug (auto-generated from title if omitted)")
+    published: Optional[bool] = Field(default=True, description="Whether the page is published")
+    metafield: Optional[Dict[str, Any]] = Field(default=None, description="Optional metafield")
+
+
+@mcp.tool(
+    name="shopify_create_page",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_page(params: CreatePageInput) -> str:
+    """Create a new online store page."""
+    try:
+        page: Dict[str, Any] = {"title": params.title}
+        for field in ["body_html", "handle", "published", "metafield"]:
+            val = getattr(params, field)
+            if val is not None:
+                page[field] = val
+        data = await _request("POST", "pages.json", body={"page": page})
+        return _fmt(data.get("page", data))
+    except Exception as e:
+        return _error(e)
+
+
+class UpdatePageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    page_id:   int           = Field(..., description="Page ID to update")
+    title:     Optional[str] = Field(default=None)
+    body_html: Optional[str] = Field(default=None, description="Full HTML content")
+    handle:    Optional[str] = Field(default=None)
+    published: Optional[bool] = Field(default=None)
+
+
+@mcp.tool(
+    name="shopify_update_page",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_update_page(params: UpdatePageInput) -> str:
+    """Update an existing page. Edit title, HTML content, handle, or published status."""
+    try:
+        page: Dict[str, Any] = {}
+        for field in ["title", "body_html", "handle", "published"]:
+            val = getattr(params, field)
+            if val is not None:
+                page[field] = val
+        data = await _request("PUT", f"pages/{params.page_id}.json", body={"page": page})
+        return _fmt(data.get("page", data))
+    except Exception as e:
+        return _error(e)
+
+
+class DeletePageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page_id: int = Field(..., description="Page ID to delete")
+
+
+@mcp.tool(
+    name="shopify_delete_page",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_delete_page(params: DeletePageInput) -> str:
+    """Permanently delete a page."""
+    try:
+        await _request("DELETE", f"pages/{params.page_id}.json")
+        return f"Page {params.page_id} deleted."
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOG & ARTICLES
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListBlogsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: Optional[int] = Field(default=50, ge=1, le=250)
+
+
+@mcp.tool(
+    name="shopify_list_blogs",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_blogs(params: ListBlogsInput) -> str:
+    """List all blogs in the store."""
+    try:
+        data  = await _request("GET", "blogs.json", params={"limit": params.limit})
+        blogs = data.get("blogs", [])
+        return _fmt({"count": len(blogs), "blogs": blogs})
+    except Exception as e:
+        return _error(e)
+
+
+class ListArticlesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    blog_id:        int            = Field(..., description="Blog ID (get from shopify_list_blogs)")
+    limit:          Optional[int]  = Field(default=50, ge=1, le=250)
+    published_status: Optional[str] = Field(default="any", description="published, unpublished, or any")
+
+
+@mcp.tool(
+    name="shopify_list_articles",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_articles(params: ListArticlesInput) -> str:
+    """List articles in a specific blog."""
+    try:
+        p = {"limit": params.limit, "published_status": params.published_status}
+        data     = await _request("GET", f"blogs/{params.blog_id}/articles.json", params=p)
+        articles = data.get("articles", [])
+        return _fmt({"count": len(articles), "articles": articles})
+    except Exception as e:
+        return _error(e)
+
+
+class CreateArticleInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    blog_id:   int           = Field(..., description="Blog ID to post to")
+    title:     str           = Field(..., min_length=1)
+    body_html: Optional[str] = Field(default=None, description="HTML content")
+    author:    Optional[str] = Field(default=None)
+    tags:      Optional[str] = Field(default=None, description="Comma-separated tags")
+    published: Optional[bool] = Field(default=True)
+    image:     Optional[Dict[str, Any]] = Field(default=None, description="Image object with src URL")
+
+
+@mcp.tool(
+    name="shopify_create_article",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_article(params: CreateArticleInput) -> str:
+    """Create a new blog article."""
+    try:
+        article: Dict[str, Any] = {"title": params.title}
+        for field in ["body_html", "author", "tags", "published", "image"]:
+            val = getattr(params, field)
+            if val is not None:
+                article[field] = val
+        data = await _request("POST", f"blogs/{params.blog_id}/articles.json", body={"article": article})
+        return _fmt(data.get("article", data))
+    except Exception as e:
+        return _error(e)
+
+
+class UpdateArticleInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    blog_id:    int           = Field(..., description="Blog ID")
+    article_id: int           = Field(..., description="Article ID to update")
+    title:      Optional[str] = Field(default=None)
+    body_html:  Optional[str] = Field(default=None)
+    author:     Optional[str] = Field(default=None)
+    tags:       Optional[str] = Field(default=None)
+    published:  Optional[bool] = Field(default=None)
+
+
+@mcp.tool(
+    name="shopify_update_article",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_update_article(params: UpdateArticleInput) -> str:
+    """Update an existing blog article."""
+    try:
+        article: Dict[str, Any] = {}
+        for field in ["title", "body_html", "author", "tags", "published"]:
+            val = getattr(params, field)
+            if val is not None:
+                article[field] = val
+        data = await _request("PUT", f"blogs/{params.blog_id}/articles/{params.article_id}.json", body={"article": article})
+        return _fmt(data.get("article", data))
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# METAFIELDS (for products, pages, collections, shop, etc.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListMetafieldsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    owner_resource: str           = Field(..., description="Resource type: shop, product, collection, customer, order, page, blog, article, variant")
+    owner_id:       Optional[int] = Field(default=None, description="Resource ID (not needed for 'shop')")
+    namespace:      Optional[str] = Field(default=None, description="Filter by namespace")
+    key:            Optional[str] = Field(default=None, description="Filter by key")
+    limit:          Optional[int] = Field(default=50, ge=1, le=250)
+
+
+@mcp.tool(
+    name="shopify_list_metafields",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_metafields(params: ListMetafieldsInput) -> str:
+    """List metafields for any resource (shop, product, collection, customer, order, page, etc.)."""
+    try:
+        if params.owner_resource == "shop":
+            endpoint = "metafields.json"
+        else:
+            endpoint = f"{params.owner_resource}s/{params.owner_id}/metafields.json"
+
+        p: Dict[str, Any] = {"limit": params.limit}
+        for field in ["namespace", "key"]:
+            val = getattr(params, field)
+            if val is not None:
+                p[field] = val
+
+        data       = await _request("GET", endpoint, params=p)
+        metafields = data.get("metafields", [])
+        return _fmt({"count": len(metafields), "metafields": metafields})
+    except Exception as e:
+        return _error(e)
+
+
+class CreateMetafieldInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    owner_resource: str           = Field(..., description="Resource type: shop, product, collection, customer, order, page")
+    owner_id:       Optional[int] = Field(default=None, description="Resource ID (not needed for 'shop')")
+    namespace:      str           = Field(..., description="Metafield namespace, e.g. 'custom'")
+    key:            str           = Field(..., description="Metafield key, e.g. 'tagline'")
+    value:          str           = Field(..., description="Metafield value")
+    type:           str           = Field(default="single_line_text_field", description="Value type: single_line_text_field, multi_line_text_field, integer, boolean, json, etc.")
+
+
+@mcp.tool(
+    name="shopify_create_metafield",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_metafield(params: CreateMetafieldInput) -> str:
+    """Create a metafield on any resource. Useful for storing custom data on products, pages, shop, etc."""
+    try:
+        if params.owner_resource == "shop":
+            endpoint = "metafields.json"
+        else:
+            endpoint = f"{params.owner_resource}s/{params.owner_id}/metafields.json"
+
+        body = {"metafield": {
+            "namespace": params.namespace,
+            "key":       params.key,
+            "value":     params.value,
+            "type":      params.type,
+        }}
+        data = await _request("POST", endpoint, body=body)
+        return _fmt(data.get("metafield", data))
+    except Exception as e:
+        return _error(e)
+
+
+class UpdateMetafieldInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    metafield_id: int = Field(..., description="Metafield ID to update")
+    value:        str = Field(..., description="New value")
+    type:         Optional[str] = Field(default=None, description="Value type if changing")
+
+
+@mcp.tool(
+    name="shopify_update_metafield",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_update_metafield(params: UpdateMetafieldInput) -> str:
+    """Update the value of an existing metafield."""
+    try:
+        metafield: Dict[str, Any] = {"value": params.value}
+        if params.type:
+            metafield["type"] = params.type
+        data = await _request("PUT", f"metafields/{params.metafield_id}.json", body={"metafield": metafield})
+        return _fmt(data.get("metafield", data))
+    except Exception as e:
+        return _error(e)
+
+
+class DeleteMetafieldInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    metafield_id: int = Field(..., description="Metafield ID to delete")
+
+
+@mcp.tool(
+    name="shopify_delete_metafield",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_delete_metafield(params: DeleteMetafieldInput) -> str:
+    """Delete a metafield permanently."""
+    try:
+        await _request("DELETE", f"metafields/{params.metafield_id}.json")
+        return f"Metafield {params.metafield_id} deleted."
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REDIRECTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListRedirectsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: Optional[int] = Field(default=50, ge=1, le=250)
+    path:  Optional[str] = Field(default=None, description="Filter by source path")
+
+
+@mcp.tool(
+    name="shopify_list_redirects",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_redirects(params: ListRedirectsInput) -> str:
+    """List URL redirects in the store."""
+    try:
+        p: Dict[str, Any] = {"limit": params.limit}
+        if params.path:
+            p["path"] = params.path
+        data      = await _request("GET", "redirects.json", params=p)
+        redirects = data.get("redirects", [])
+        return _fmt({"count": len(redirects), "redirects": redirects})
+    except Exception as e:
+        return _error(e)
+
+
+class CreateRedirectInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    path:   str = Field(..., description="Source path, e.g. '/old-product'")
+    target: str = Field(..., description="Target URL or path, e.g. '/new-product'")
+
+
+@mcp.tool(
+    name="shopify_create_redirect",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_redirect(params: CreateRedirectInput) -> str:
+    """Create a URL redirect."""
+    try:
+        data = await _request("POST", "redirects.json", body={"redirect": {"path": params.path, "target": params.target}})
+        return _fmt(data.get("redirect", data))
+    except Exception as e:
+        return _error(e)
+
+
+class DeleteRedirectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    redirect_id: int = Field(..., description="Redirect ID to delete")
+
+
+@mcp.tool(
+    name="shopify_delete_redirect",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_delete_redirect(params: DeleteRedirectInput) -> str:
+    """Delete a URL redirect."""
+    try:
+        await _request("DELETE", f"redirects/{params.redirect_id}.json")
+        return f"Redirect {params.redirect_id} deleted."
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCRIPT TAGS
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListScriptTagsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: Optional[int] = Field(default=50, ge=1, le=250)
+    src:   Optional[str] = Field(default=None, description="Filter by script URL")
+
+
+@mcp.tool(
+    name="shopify_list_script_tags",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_script_tags(params: ListScriptTagsInput) -> str:
+    """List all script tags (external JS injected into storefront)."""
+    try:
+        p: Dict[str, Any] = {"limit": params.limit}
+        if params.src:
+            p["src"] = params.src
+        data        = await _request("GET", "script_tags.json", params=p)
+        script_tags = data.get("script_tags", [])
+        return _fmt({"count": len(script_tags), "script_tags": script_tags})
+    except Exception as e:
+        return _error(e)
+
+
+class CreateScriptTagInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    src:          str           = Field(..., description="URL of the JavaScript file to inject")
+    event:        Optional[str] = Field(default="onload", description="When to load: onload")
+    display_scope: Optional[str] = Field(default="all", description="all, online_store, or order_status")
+
+
+@mcp.tool(
+    name="shopify_create_script_tag",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_script_tag(params: CreateScriptTagInput) -> str:
+    """Inject an external JavaScript file into the storefront."""
+    try:
+        tag: Dict[str, Any] = {"src": params.src}
+        if params.event:
+            tag["event"] = params.event
+        if params.display_scope:
+            tag["display_scope"] = params.display_scope
+        data = await _request("POST", "script_tags.json", body={"script_tag": tag})
+        return _fmt(data.get("script_tag", data))
+    except Exception as e:
+        return _error(e)
+
+
+class DeleteScriptTagInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    script_tag_id: int = Field(..., description="Script tag ID to delete")
+
+
+@mcp.tool(
+    name="shopify_delete_script_tag",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_delete_script_tag(params: DeleteScriptTagInput) -> str:
+    """Remove an injected script tag from the storefront."""
+    try:
+        await _request("DELETE", f"script_tags/{params.script_tag_id}.json")
+        return f"Script tag {params.script_tag_id} deleted."
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DISCOUNTS & PRICE RULES
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListPriceRulesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: Optional[int] = Field(default=50, ge=1, le=250)
+
+
+@mcp.tool(
+    name="shopify_list_price_rules",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_price_rules(params: ListPriceRulesInput) -> str:
+    """List all price rules (discount campaigns)."""
+    try:
+        data        = await _request("GET", "price_rules.json", params={"limit": params.limit})
+        price_rules = data.get("price_rules", [])
+        return _fmt({"count": len(price_rules), "price_rules": price_rules})
+    except Exception as e:
+        return _error(e)
+
+
+class CreatePriceRuleInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    title:               str            = Field(..., description="Internal name for the price rule")
+    value_type:          str            = Field(..., description="'percentage' or 'fixed_amount'")
+    value:               str            = Field(..., description="Negative number, e.g. '-10.0' for 10% or 10 HUF off")
+    customer_selection:  str            = Field(default="all", description="'all' or 'prerequisite'")
+    target_type:         str            = Field(default="line_item", description="'line_item' or 'shipping_line'")
+    target_selection:    str            = Field(default="all", description="'all' or 'entitled'")
+    allocation_method:   str            = Field(default="across", description="'across' or 'each'")
+    starts_at:           str            = Field(..., description="ISO 8601 start date, e.g. '2026-01-01T00:00:00Z'")
+    ends_at:             Optional[str]  = Field(default=None, description="ISO 8601 end date (omit for no expiry)")
+    usage_limit:         Optional[int]  = Field(default=None, description="Max total uses")
+    once_per_customer:   Optional[bool] = Field(default=False)
+
+
+@mcp.tool(
+    name="shopify_create_price_rule",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_price_rule(params: CreatePriceRuleInput) -> str:
+    """Create a new price rule (discount campaign). Use shopify_create_discount_code to add codes to it."""
+    try:
+        rule: Dict[str, Any] = {
+            "title":              params.title,
+            "value_type":         params.value_type,
+            "value":              params.value,
+            "customer_selection": params.customer_selection,
+            "target_type":        params.target_type,
+            "target_selection":   params.target_selection,
+            "allocation_method":  params.allocation_method,
+            "starts_at":          params.starts_at,
+        }
+        for field in ["ends_at", "usage_limit", "once_per_customer"]:
+            val = getattr(params, field)
+            if val is not None:
+                rule[field] = val
+        data = await _request("POST", "price_rules.json", body={"price_rule": rule})
+        return _fmt(data.get("price_rule", data))
+    except Exception as e:
+        return _error(e)
+
+
+class CreateDiscountCodeInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    price_rule_id: int = Field(..., description="Price rule ID to attach the code to")
+    code:          str = Field(..., description="The discount code string, e.g. 'NEVESSVISSZZA10'")
+
+
+@mcp.tool(
+    name="shopify_create_discount_code",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_discount_code(params: CreateDiscountCodeInput) -> str:
+    """Create a discount code for an existing price rule."""
+    try:
+        data = await _request(
+            "POST",
+            f"price_rules/{params.price_rule_id}/discount_codes.json",
+            body={"discount_code": {"code": params.code}},
+        )
+        return _fmt(data.get("discount_code", data))
+    except Exception as e:
+        return _error(e)
+
+
+class ListDiscountCodesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    price_rule_id: int           = Field(..., description="Price rule ID")
+    limit:         Optional[int] = Field(default=50, ge=1, le=250)
+
+
+@mcp.tool(
+    name="shopify_list_discount_codes",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_discount_codes(params: ListDiscountCodesInput) -> str:
+    """List all discount codes for a price rule."""
+    try:
+        data  = await _request("GET", f"price_rules/{params.price_rule_id}/discount_codes.json", params={"limit": params.limit})
+        codes = data.get("discount_codes", [])
+        return _fmt({"count": len(codes), "discount_codes": codes})
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SHOP POLICIES (legal pages: privacy, refund, terms, etc.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class GetPoliciesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+@mcp.tool(
+    name="shopify_get_policies",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_get_policies(params: GetPoliciesInput) -> str:
+    """
+    Get all store legal policies: privacy policy, refund policy, 
+    terms of service, shipping policy, subscription policy.
+    """
+    try:
+        data     = await _request("GET", "policies.json")
+        policies = data.get("policies", [])
+        return _fmt({"count": len(policies), "policies": policies})
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PRODUCT IMAGES
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListProductImagesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: int = Field(..., description="Product ID")
+
+
+@mcp.tool(
+    name="shopify_list_product_images",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_product_images(params: ListProductImagesInput) -> str:
+    """List all images for a product."""
+    try:
+        data   = await _request("GET", f"products/{params.product_id}/images.json")
+        images = data.get("images", [])
+        return _fmt({"count": len(images), "images": images})
+    except Exception as e:
+        return _error(e)
+
+
+class CreateProductImageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    product_id:  int           = Field(..., description="Product ID")
+    src:         str           = Field(..., description="Public URL of the image to upload")
+    alt:         Optional[str] = Field(default=None, description="Alt text for the image")
+    position:    Optional[int] = Field(default=None, description="Position in image list (1 = first/main)")
+    variant_ids: Optional[List[int]] = Field(default=None, description="Associate image with specific variant IDs")
+
+
+@mcp.tool(
+    name="shopify_create_product_image",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+)
+async def shopify_create_product_image(params: CreateProductImageInput) -> str:
+    """Add an image to a product from a public URL."""
+    try:
+        image: Dict[str, Any] = {"src": params.src}
+        for field in ["alt", "position", "variant_ids"]:
+            val = getattr(params, field)
+            if val is not None:
+                image[field] = val
+        data = await _request("POST", f"products/{params.product_id}/images.json", body={"image": image})
+        return _fmt(data.get("image", data))
+    except Exception as e:
+        return _error(e)
+
+
+class DeleteProductImageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: int = Field(..., description="Product ID")
+    image_id:   int = Field(..., description="Image ID to delete")
+
+
+@mcp.tool(
+    name="shopify_delete_product_image",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_delete_product_image(params: DeleteProductImageInput) -> str:
+    """Delete a product image."""
+    try:
+        await _request("DELETE", f"products/{params.product_id}/images/{params.image_id}.json")
+        return f"Image {params.image_id} deleted from product {params.product_id}."
+    except Exception as e:
+        return _error(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PRODUCT VARIANTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ListVariantsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: int           = Field(..., description="Product ID")
+    limit:      Optional[int] = Field(default=50, ge=1, le=250)
+
+
+@mcp.tool(
+    name="shopify_list_variants",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_list_variants(params: ListVariantsInput) -> str:
+    """List all variants of a product (sizes, colors, etc.)."""
+    try:
+        data     = await _request("GET", f"products/{params.product_id}/variants.json", params={"limit": params.limit})
+        variants = data.get("variants", [])
+        return _fmt({"count": len(variants), "variants": variants})
+    except Exception as e:
+        return _error(e)
+
+
+class UpdateVariantInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    variant_id:         int           = Field(..., description="Variant ID to update")
+    price:              Optional[str] = Field(default=None, description="Price as string, e.g. '4990.00'")
+    compare_at_price:   Optional[str] = Field(default=None, description="Original price (crossed-out price)")
+    sku:                Optional[str] = Field(default=None)
+    barcode:            Optional[str] = Field(default=None)
+    weight:             Optional[float] = Field(default=None)
+    weight_unit:        Optional[str] = Field(default=None, description="g, kg, lb, oz")
+    requires_shipping:  Optional[bool] = Field(default=None)
+    taxable:            Optional[bool] = Field(default=None)
+    option1:            Optional[str] = Field(default=None, description="First option value (e.g. size: 'M')")
+    option2:            Optional[str] = Field(default=None)
+    option3:            Optional[str] = Field(default=None)
+
+
+@mcp.tool(
+    name="shopify_update_variant",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def shopify_update_variant(params: UpdateVariantInput) -> str:
+    """Update a product variant (price, compare-at price, SKU, weight, options)."""
+    try:
+        variant: Dict[str, Any] = {}
+        for field in ["price", "compare_at_price", "sku", "barcode", "weight", "weight_unit",
+                      "requires_shipping", "taxable", "option1", "option2", "option3"]:
+            val = getattr(params, field)
+            if val is not None:
+                variant[field] = val
+        data = await _request("PUT", f"variants/{params.variant_id}.json", body={"variant": variant})
+        return _fmt(data.get("variant", data))
+    except Exception as e:
+        return _error(e)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # WEBHOOKS
